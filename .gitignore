@@ -1,0 +1,57 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+dist/
+build/
+lib/
+out/
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Environment files
+.env
+.env.*.local
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Caches
+.cache/
+.parcel-cache/
+
+# Test output
+jest-results.json
+
+# Misc
+tmp/
+temp/
+*.tmp
+
+# Optional: lock files are usually committed; uncomment to ignore if you prefer
+# package-lock.json
+# pnpm-lock.yaml
+node_modules/
+dist/
+AGENTS.md
+.contextbridge/
+npm-debug.log*
