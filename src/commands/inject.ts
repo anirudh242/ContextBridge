@@ -34,7 +34,7 @@ export function registerInjectCommand(program: Command): void {
           return;
         }
 
-        const output = formatContextForInjection({
+        const output = await formatContextForInjection({
           projectName,
           entry,
           entries: project?.entries,

@@ -173,10 +173,9 @@ export function registerCaptureCommand(program: Command): void {
           timestamp: new Date().toISOString(),
           branch: (await getCurrentBranch(projectPath)) ?? 'unknown',
           summary,
-          raw,
         };
 
-        await addEntryToProjectStore(projectPath, entry);
+        await addEntryToProjectStore(projectPath, entry, raw);
 
         if (summary) {
           printSuccess('Context saved', formatSummaryLines(summary));

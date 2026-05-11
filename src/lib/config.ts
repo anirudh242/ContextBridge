@@ -1,14 +1,13 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { AppConfig } from '../types.js';
+import type { AppConfig, ProviderConfig } from '../types.js';
 
 const CONFIG_DIR = path.join(os.homedir(), '.contextbridge');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG: AppConfig = {
-  defaultModel: 'qwen2.5-coder:7b',
-  ollamaBaseUrl: 'http://127.0.0.1:11434',
+  provider: 'ollama',
   ollamaTimeoutMs: 120000,
   projects: {},
 };
@@ -73,7 +72,17 @@ export async function registerProjectInConfig(projectName: string, projectPath: 
   return config;
 }
 
-export async function setOllamaTimeout(timeoutMs: number | null): Promise<AppConfig> {
+export async function setProvider(providerConfig: ProviderConfig): Promise<AppConfig> {
+  const config = await ensureConfig();
+  config.provider = providerConfig.provider;
+  config.apiKey = providerConfig.apiKey;
+  config.model = providerConfig.model;
+  config.baseUrl = providerConfig.baseUrl;
+  await saveConfig(config);
+  return config;
+}
+
+export async function setTimeout(timeoutMs: number | null): Promise<AppConfig> {
   const config = await ensureConfig();
   config.ollamaTimeoutMs = timeoutMs;
   await saveConfig(config);

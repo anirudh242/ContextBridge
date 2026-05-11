@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { formatRelativeTime } from '../utils/display.js';
-import type { ContextSummary, InjectContext, StoreEntry } from '../types.js';
+import type { ContextSummary, InjectContext, StoreEntry, RawCapture } from '../types.js';
+import { loadRawCapture } from './store.js';
 
 function renderList(items: string[] | undefined, emptyLabel = 'Unknown'): string {
   if (!items || items.length === 0) {
@@ -11,9 +12,9 @@ function renderList(items: string[] | undefined, emptyLabel = 'Unknown'): string
   return items.map((item) => `- ${item}`).join('\n');
 }
 
-function getFallbackTask(entry: StoreEntry): string {
-  if (entry.raw.note.trim()) {
-    return entry.raw.note.trim();
+function getFallbackTask(raw: RawCapture): string {
+  if (raw.note.trim()) {
+    return raw.note.trim();
   }
 
   return 'Unknown';
@@ -71,64 +72,15 @@ function compactGrounding(repoGrounding: string): string {
   return compacted || repoGrounding.trim().slice(0, 1200);
 }
 
-function containsGenericAdvice(summary: ContextSummary): boolean {
-  const text = [
-    summary.projectGoal,
-    summary.currentDirection,
-    summary.currentFocus,
-    summary.stack,
-    ...summary.decisions,
-    ...summary.blockers,
-    ...summary.nextSteps,
-  ].join(' ').toLowerCase();
-
-  return [
-    'create a new branch',
-    'commit the changes',
-    'descriptive messages',
-    'deploy to staging',
-    'lazy loading',
-    'react hooks',
-    'user interface',
-    'optimize rendering',
-    'implement unit tests',
-    'improve readability',
-    'refactor existing code',
-  ].some((pattern) => text.includes(pattern));
-}
-
-function conflictsWithGrounding(summary: ContextSummary, repoGrounding: string): boolean {
-  const grounding = repoGrounding.toLowerCase();
-  const summaryText = [
-    summary.projectGoal,
-    summary.currentDirection,
-    summary.currentFocus,
-    summary.stack,
-    ...summary.decisions,
-    ...summary.nextSteps,
-  ].join(' ').toLowerCase();
-
-  const mentionsReact = /\breact\b/.test(summaryText);
-  const groundingHasReact = /\breact\b/.test(grounding);
-  const mentionsUiFeature = /user interface|list items|rendering/.test(summaryText);
-
-  return (mentionsReact && !groundingHasReact) || mentionsUiFeature;
-}
-
 function getTrustedSummary(entry: StoreEntry): ContextSummary | null {
-  if (!entry.summary) {
-    return null;
-  }
+  if (!entry.summary) return null;
 
-  const missingCore = entry.summary.projectGoal === 'Unknown'
-    || entry.summary.currentDirection === 'Unknown'
-    || entry.summary.currentFocus === 'Unknown';
+  const missingCore =
+    entry.summary.projectGoal === 'Unknown' &&
+    entry.summary.currentDirection === 'Unknown' &&
+    entry.summary.currentFocus === 'Unknown';
 
-  if (missingCore || containsGenericAdvice(entry.summary) || conflictsWithGrounding(entry.summary, entry.raw.repoGrounding)) {
-    return null;
-  }
-
-  return entry.summary;
+  return missingCore ? null : entry.summary;
 }
 
 function sortNewestFirst(entries: StoreEntry[]): StoreEntry[] {
@@ -140,8 +92,8 @@ function findTrustedSummaryEntry(entry: StoreEntry, entries: StoreEntry[] = []):
   return sortNewestFirst(candidates).find((candidate) => getTrustedSummary(candidate) !== null) ?? null;
 }
 
-function buildFallbackDirection(entry: StoreEntry, summary: ContextSummary | null, trustedEntry: StoreEntry | null): string {
-  if (summary?.currentDirection && trustedEntry?.id === entry.id) {
+function buildFallbackDirection(raw: RawCapture, summary: ContextSummary | null, trustedEntry: StoreEntry | null, entryId: string): string {
+  if (summary?.currentDirection && trustedEntry?.id === entryId) {
     return summary.currentDirection;
   }
 
@@ -149,7 +101,7 @@ function buildFallbackDirection(entry: StoreEntry, summary: ContextSummary | nul
     return summary.currentDirection;
   }
 
-  const grounding = entry.raw.repoGrounding.trim();
+  const grounding = raw.repoGrounding.trim();
   if (grounding) {
     return 'No trusted summary is available yet. Use the project grounding below as the current source of truth.';
   }
@@ -157,11 +109,17 @@ function buildFallbackDirection(entry: StoreEntry, summary: ContextSummary | nul
   return 'Unknown';
 }
 
-export function formatContextForInjection({ projectName, entry, entries = [] }: InjectContext): string {
+export async function formatContextForInjection({ projectName, entry, entries = [] }: InjectContext): Promise<string> {
   const trustedEntry = findTrustedSummaryEntry(entry, entries);
   const summary = trustedEntry ? getTrustedSummary(trustedEntry) : null;
-  const grounding = compactGrounding(entry.raw.repoGrounding);
-  const fallbackProjectGoal = getPackageDescription(entry.raw.repoGrounding);
+  
+  const raw = await loadRawCapture(entry.id);
+  if (!raw) {
+    throw new Error('Raw capture not found for the head entry.');
+  }
+
+  const grounding = compactGrounding(raw.repoGrounding);
+  const fallbackProjectGoal = getPackageDescription(raw.repoGrounding);
 
   return [
     `[ContextBridge] Project: ${projectName} | Branch: ${entry.branch ?? 'unknown'} | Captured: ${formatRelativeTime(entry.timestamp)}`,
@@ -171,9 +129,9 @@ export function formatContextForInjection({ projectName, entry, entries = [] }: 
     '',
     `What we're building: ${summary?.projectGoal ?? fallbackProjectGoal}`,
     '',
-    `Current direction: ${buildFallbackDirection(entry, summary, trustedEntry)}`,
+    `Current direction: ${buildFallbackDirection(raw, summary, trustedEntry, entry.id)}`,
     '',
-    `Current implementation focus: ${summary?.currentFocus ?? getFallbackTask(entry)}`,
+    `Current implementation focus: ${summary?.currentFocus ?? getFallbackTask(raw)}`,
     '',
     'Recent decisions:',
     renderList(summary?.decisions),

@@ -18,14 +18,6 @@ const summarySchema = z.object({
 
 const summaryJsonSchema = zodToJsonSchema(summarySchema, 'ContextSummary');
 
-interface RequestSummaryArgs {
-  baseUrl: string;
-  model: string;
-  timeoutMs: number | null;
-  prompt: string;
-  numPredict: number;
-}
-
 interface OllamaGenerateResponse {
   response?: string;
 }
@@ -83,13 +75,90 @@ function buildFallbackPrompt(content: string): string {
   ].join('\n');
 }
 
-async function requestSummary({
-  baseUrl,
-  model,
-  timeoutMs,
-  prompt,
-  numPredict,
-}: RequestSummaryArgs): Promise<ContextSummary> {
+async function callAnthropic(prompt: string, config: AppConfig): Promise<string> {
+  const model = config.model || 'claude-haiku-4-5-20251001';
+  const baseUrl = config.baseUrl || 'https://api.anthropic.com';
+  const apiKey = config.apiKey;
+
+  if (!apiKey) throw new Error('Anthropic API key is required');
+
+  const response = await fetch(`${baseUrl}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!response.ok) throw new Error(`Anthropic request failed with status ${response.status}`);
+  const payload = await response.json() as any;
+  return payload.content[0].text;
+}
+
+async function callOpenAI(prompt: string, config: AppConfig): Promise<string> {
+  const model = config.model || 'gpt-4o-mini';
+  const baseUrl = config.baseUrl || 'https://api.openai.com';
+  const apiKey = config.apiKey;
+
+  if (!apiKey) throw new Error('OpenAI API key is required');
+
+  const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 1024,
+      temperature: 0,
+    }),
+  });
+
+  if (!response.ok) throw new Error(`OpenAI request failed with status ${response.status}`);
+  const payload = await response.json() as any;
+  return payload.choices[0].message.content;
+}
+
+async function callGemini(prompt: string, config: AppConfig): Promise<string> {
+  const model = config.model || 'gemini-2.0-flash';
+  const baseUrl = config.baseUrl || 'https://generativelanguage.googleapis.com';
+  const apiKey = config.apiKey;
+
+  if (!apiKey) throw new Error('Gemini API key is required');
+
+  const response = await fetch(`${baseUrl}/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 1024, temperature: 0 },
+    }),
+  });
+
+  if (!response.ok) throw new Error(`Gemini request failed with status ${response.status}`);
+  const payload = await response.json() as any;
+  return payload.candidates[0].content.parts[0].text;
+}
+
+async function callOllama(prompt: string, config: AppConfig): Promise<string> {
+  const model = config.model || DEFAULT_MODEL;
+  const baseUrl = config.baseUrl || DEFAULT_URL;
+  const timeoutMs = config.ollamaTimeoutMs === null
+    ? null
+    : (typeof config.ollamaTimeoutMs === 'number' && Number.isFinite(config.ollamaTimeoutMs)
+      ? config.ollamaTimeoutMs
+      : DEFAULT_TIMEOUT_MS);
+
   const signal = timeoutMs === null ? undefined : AbortSignal.timeout(timeoutMs);
 
   const response = await fetch(`${baseUrl}/api/generate`, {
@@ -103,7 +172,7 @@ async function requestSummary({
       stream: false,
       format: summaryJsonSchema,
       options: {
-        num_predict: numPredict,
+        num_predict: 384,
         temperature: 0,
       },
     }),
@@ -115,7 +184,21 @@ async function requestSummary({
   }
 
   const payload = (await response.json()) as OllamaGenerateResponse;
-  return parseSummary(payload.response ?? '');
+  return payload.response ?? '';
+}
+
+async function callLLM(prompt: string, config: AppConfig): Promise<string> {
+  switch (config.provider) {
+    case 'anthropic':
+      return callAnthropic(prompt, config);
+    case 'openai':
+      return callOpenAI(prompt, config);
+    case 'gemini':
+      return callGemini(prompt, config);
+    case 'ollama':
+    default:
+      return callOllama(prompt, config);
+  }
 }
 
 function normaliseList(value: unknown, fallback: string[]): string[] {
@@ -183,10 +266,6 @@ function sanitizeScalar(value: string, fallback: string): string {
     || /plain text responses/i.test(cleaned)
     || /^here is /i.test(cleaned)
     || /^these functions/i.test(cleaned)
-    || /create a new branch/i.test(cleaned)
-    || /commit the changes/i.test(cleaned)
-    || /improve readability/i.test(cleaned)
-    || /implement unit tests/i.test(cleaned)
   ) {
     return fallback;
   }
@@ -266,33 +345,11 @@ function sanitizeSummary(summary: ContextSummary): ContextSummary {
 }
 
 function isWeakSummary(summary: ContextSummary): boolean {
-  const genericSignals = [
-    summary.projectGoal,
-    summary.currentDirection,
-    summary.currentFocus,
-    summary.stack,
-    ...summary.decisions,
-    ...summary.blockers,
-    ...summary.nextSteps,
-  ]
-    .join(' ')
-    .toLowerCase();
-
-  const genericPatterns = [
-    'create a new branch',
-    'commit the changes',
-    'descriptive messages',
-    'implement unit tests',
-    'improve readability',
-    'maintainability',
-    'refactor the code',
-  ];
-
-  const missingCoreDirection = summary.projectGoal === 'Unknown'
-    || summary.currentDirection === 'Unknown'
-    || summary.currentFocus === 'Unknown';
-
-  return missingCoreDirection || genericPatterns.some((pattern) => genericSignals.includes(pattern));
+  return (
+    summary.projectGoal === 'Unknown' &&
+    summary.currentDirection === 'Unknown' &&
+    summary.currentFocus === 'Unknown'
+  );
 }
 
 function parseSummary(text: string): ContextSummary {
@@ -341,33 +398,16 @@ function parseSummary(text: string): ContextSummary {
 }
 
 export async function summariseContent(content: string, config: Partial<AppConfig> = {}): Promise<ContextSummary> {
-  const model = config.defaultModel || DEFAULT_MODEL;
-  const baseUrl = config.ollamaBaseUrl || DEFAULT_URL;
-  const timeoutMs = config.ollamaTimeoutMs === null
-    ? null
-    : (typeof config.ollamaTimeoutMs === 'number' && Number.isFinite(config.ollamaTimeoutMs)
-      ? config.ollamaTimeoutMs
-      : DEFAULT_TIMEOUT_MS);
-
+  const fullConfig = config as AppConfig;
+  
   try {
-    return await requestSummary({
-      baseUrl,
-      model,
-      timeoutMs,
-      prompt: buildPrompt(content),
-      numPredict: 384,
-    });
+    const rawText = await callLLM(buildPrompt(content), fullConfig);
+    return parseSummary(rawText);
   } catch (error: unknown) {
-    if (!(error instanceof Error) || error.name !== 'TimeoutError') {
-      throw error;
+    if (fullConfig.provider === 'ollama' && error instanceof Error && error.name === 'TimeoutError') {
+      const rawText = await callLLM(buildFallbackPrompt(content), fullConfig);
+      return parseSummary(rawText);
     }
-
-    return requestSummary({
-      baseUrl,
-      model,
-      timeoutMs,
-      prompt: buildFallbackPrompt(content),
-      numPredict: 256,
-    });
+    throw error;
   }
 }

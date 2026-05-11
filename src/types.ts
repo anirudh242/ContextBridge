@@ -22,7 +22,6 @@ export interface StoreEntry {
   timestamp: string;
   branch: string;
   summary: ContextSummary | null;
-  raw: RawCapture;
 }
 
 export interface ProjectStore {
@@ -35,9 +34,20 @@ export interface StoreData {
   projects: Record<string, ProjectStore>;
 }
 
+export type LLMProvider = 'anthropic' | 'openai' | 'gemini' | 'ollama';
+
+export interface ProviderConfig {
+  provider: LLMProvider;
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
+}
+
 export interface AppConfig {
-  defaultModel: string;
-  ollamaBaseUrl: string;
+  provider: LLMProvider;
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
   ollamaTimeoutMs: number | null;
   projects: Record<string, string>;
 }

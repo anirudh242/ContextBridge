@@ -35,7 +35,7 @@ export function registerLogCommand(program: Command): void {
 
       filtered.forEach((entry, index) => {
         const summary = entry.summary;
-        const task = summary?.currentFocus ?? entry.raw.note ?? 'Unknown';
+        const task = summary?.currentFocus ?? 'Unknown';
         const lines = [
           `#${index + 1}  ${entry.branch ?? 'unknown'}  ${formatRelativeTime(entry.timestamp)}`,
           `Focus: ${task}`,

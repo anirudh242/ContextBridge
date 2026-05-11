@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getConfigDir } from './config.js';
-import type { ProjectStore, StoreData, StoreEntry } from '../types.js';
+import type { ProjectStore, StoreData, StoreEntry, RawCapture } from '../types.js';
 
 const STORE_PATH = path.join(getConfigDir(), 'store.json');
+const RAW_DIR = path.join(getConfigDir(), 'raw');
 
 function createEmptyStore(): StoreData {
   return {
@@ -19,6 +20,21 @@ function getErrorCode(error: unknown): string | undefined {
 
 export function getStorePath(): string {
   return STORE_PATH;
+}
+
+export async function saveRawCapture(id: string, raw: RawCapture): Promise<void> {
+  await fs.mkdir(RAW_DIR, { recursive: true });
+  await fs.writeFile(path.join(RAW_DIR, `${id}.json`), `${JSON.stringify(raw, null, 2)}\n`, 'utf8');
+}
+
+export async function loadRawCapture(id: string): Promise<RawCapture | null> {
+  try {
+    const content = await fs.readFile(path.join(RAW_DIR, `${id}.json`), 'utf8');
+    return JSON.parse(content) as RawCapture;
+  } catch (error: unknown) {
+    if (getErrorCode(error) === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 export async function saveStore(store: StoreData): Promise<void> {
@@ -37,6 +53,23 @@ export async function ensureStore(): Promise<StoreData> {
       const normalised = createEmptyStore();
       await saveStore(normalised);
       return normalised;
+    }
+
+    let migrated = false;
+    for (const project of Object.values(parsed.projects)) {
+      if (!project.entries) continue;
+      for (const entry of project.entries) {
+        if ('raw' in entry) {
+          const raw = (entry as any).raw as RawCapture;
+          await saveRawCapture(entry.id, raw);
+          delete (entry as any).raw;
+          migrated = true;
+        }
+      }
+    }
+
+    if (migrated) {
+      await saveStore(parsed as StoreData);
     }
 
     return parsed as StoreData;
@@ -78,7 +111,9 @@ export async function getProjectStore(projectPath: string): Promise<ProjectStore
   return store.projects[projectPath] ?? null;
 }
 
-export async function addEntryToProjectStore(projectPath: string, entry: StoreEntry): Promise<StoreEntry> {
+export async function addEntryToProjectStore(projectPath: string, entry: StoreEntry, raw: RawCapture): Promise<StoreEntry> {
+  await saveRawCapture(entry.id, raw);
+
   const store = await ensureStore();
   const project: ProjectStore = store.projects[projectPath] ?? {
     name: path.basename(projectPath),

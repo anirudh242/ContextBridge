@@ -33,13 +33,16 @@ export function registerStatusCommand(program: Command): void {
       printInfoPanel('ContextBridge Status', [
         `Project: ${projectName}`,
         `Branch: ${branch ?? 'unknown'}`,
-        `Current focus: ${entry?.summary?.currentFocus ?? entry?.raw.note ?? 'Unknown'}`,
+        `Current focus: ${entry?.summary?.currentFocus ?? 'Unknown'}`,
         `Last captured: ${entry ? formatRelativeTime(entry.timestamp) : 'Never'}`,
         `Total sessions: ${project?.entries.length ?? 0}`,
         `AGENTS.md: ${agentsPresent ? 'present' : 'missing'}`,
-        `Ollama model: ${config.defaultModel}`,
-        `Ollama URL: ${config.ollamaBaseUrl}`,
-        `Ollama timeout: ${formatTimeout(config.ollamaTimeoutMs)}`,
+        `LLM provider: ${config.provider}`,
+        `Model: ${config.model ?? 'default'}`,
+        ...(config.provider === 'ollama' ? [
+          `Ollama URL: ${config.baseUrl ?? 'http://127.0.0.1:11434'}`,
+          `Ollama timeout: ${formatTimeout(config.ollamaTimeoutMs)}`,
+        ] : []),
       ]);
     });
 }
